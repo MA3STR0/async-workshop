@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Noise Levels</title>
+    <link rel="stylesheet" href="https://unpkg.com/purecss@2.0.3/build/pure-min.css">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+
+    <style>
+        h1 {
+            text-align: center;
+            margin: 3em 1em 2em;
+        }
+
+        #canvases {
+            margin: 1em .5em;
+            text-align: center;
+        }
+        .canvas {
+            display: inline;
+            width: 150px;
+            height: 300px;
+            margin: 0 .5em;
+        }
+
+        .form {
+            width: 50%;
+            margin: 0 auto;
+        }
+        #info {
+            margin: 4em;
+            text-align: center;
+            color: gray;
+        }
+
+    </style>
+</head>
+<body>
+<h1>Noise level dashboard</h1>
+<div class="form">
+    <label for="name">Name</label>
+    <input type="text" id="name" name="name" onkeypress="tracker.start(event)">
+    <br><br>
+    <input type="checkbox" id="start" onclick="tracker.start(event)">
+    <label class="form-check-label" for="start">Check to start</label>
+</div>
+<div id="canvases"></div>
+<div id="info"></div>
+<script>
+    var tracker = {
+        socket: null,
+        name: null,
+        sources: {},
+        totalMessages: 0,
+
+        start: function (event) {
+            var input = document.getElementById("start");
+            if (event.keyCode && event.keyCode !== 13){
+                return
+            } else if (event.keyCode === 13) {
+                event.preventDefault();
+                input.checked = true;
+            }
+            tracker.name = document.getElementById('name').value;
+            var url = "ws://" + location.host + "/websocket";
+            tracker.socket = new WebSocket(url);
+            tracker.socket.onmessage = function (event) {
+                tracker.showMessage(JSON.parse(event.data));
+            }
+            if (input.checked) {
+                tracker.trackSound()
+                 // update statistics info
+                tracker.intervalID = setInterval(function(){
+                    var info = document.getElementById('info');
+                    var avg = Math.round(tracker.totalMessages / 3);
+                    tracker.totalMessages = 0;
+                    info.innerText = "Messages per second: " + avg;
+                }, 3000);
+            } else {
+                tracker.audioContext.close();
+                clearInterval(tracker.intervalID);
+            }
+
+        },
+        submit: function (value) {
+            message = {
+                'value': value,
+                'name': tracker.name,
+            }
+            tracker.socket.send(JSON.stringify(message));
+        },
+
+        showMessage: function (message) {
+            tracker.totalMessages++;
+            if (!tracker.sources[message.name]) {
+                var canvas = document.createElement('canvas');
+                canvas.className = 'canvas';
+                canvas.width = 150;
+                canvas.height = 300;
+                document.getElementById("canvases").appendChild(canvas);
+                let canvasContext = canvas.getContext("2d");
+                canvasContext.fillStyle = '#262626';
+                canvasContext.font = "28px impact";
+                canvasContext.textAlign = "center";
+                canvasContext.fillText(message.name, 75, 50);
+                tracker.sources[message.name] = canvasContext;
+            }
+            tracker.updateGraphs(tracker.sources[message.name], message.value)
+        },
+
+        updateGraphs: function (canvasContext, value) {
+            canvasContext.clearRect(0, 75, 150, 250);
+            canvasContext.fillStyle = 'hsl(' + String(100 - value * 2) + ', 50%, 60%)'
+            {#canvasContext.fillRect(0, 550 - value, 150, 300);#}
+            canvasContext.fillRect(0, 75, 150, value*2);
+            canvasContext.fillStyle = '#262626';
+            canvasContext.font = "48px impact";
+            canvasContext.fillText(value, 75, 300);
+        },
+
+        trackSound: function () {
+            navigator.getUserMedia = navigator.getUserMedia ||
+                navigator.webkitGetUserMedia ||
+                navigator.mozGetUserMedia;
+            if (navigator.getUserMedia) {
+                navigator.getUserMedia({
+                        audio: true
+                    },
+                    function (stream) {
+                        tracker.audioContext = new AudioContext();
+                        analyser = tracker.audioContext.createAnalyser();
+                        var microphone = tracker.audioContext.createMediaStreamSource(stream);
+                        var javascriptNode = tracker.audioContext.createScriptProcessor(2048, 1, 1);
+
+                        analyser.smoothingTimeConstant = 0.8;
+                        analyser.fftSize = 1024;
+
+                        microphone.connect(analyser);
+                        analyser.connect(javascriptNode);
+                        javascriptNode.connect(tracker.audioContext.destination);
+
+
+                        javascriptNode.onaudioprocess = function () {
+                            var array = new Uint8Array(analyser.frequencyBinCount);
+                            analyser.getByteFrequencyData(array);
+                            var values = 0;
+
+                            var length = array.length;
+                            for (var i = 0; i < length; i++) {
+                                values += (array[i]);
+                            }
+
+                            var average = values / length;
+                            tracker.submit(Math.round(average));
+                        }
+                    },
+                    function (err) {
+                        console.log("The following error occurred: " + err.name)
+                    });
+            } else {
+                alert("getUserMedia not supported");
+            }
+        }
+    };
+</script>
+</body>
+</html>
